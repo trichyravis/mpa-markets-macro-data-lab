@@ -4,5 +4,6 @@ pandas
 numpy
 plotly
 openpyxl
-yfinance
+yfinance>=0.2.60
+curl_cffi
 statsmodels

@@ -185,6 +185,8 @@ def ccil_curve():
         kind = "T-bill" if "DTB" in sec else ("G-Sec" if " GS " in f" {sec} " else "SDL")
         rows.append({"Date": d[:10], "Tenor": bucket, "Years": round(yrs, 2) if yrs else None, "Security": sec,
                      "Type": kind, "YTM %": y})
+    if not rows:
+        raise RuntimeError("CCIL table not found")  # not cached
     return pd.DataFrame(rows)
 
 
@@ -231,10 +233,19 @@ def fred(series_id):
 
 @st.cache_data(ttl=6 * 3600, show_spinner=False)
 def yahoo_close(symbol, period="10y"):
+    import time
     import yfinance as yf
-    h = yf.Ticker(symbol).history(period=period, interval="1d", auto_adjust=True)
+    h = None
+    for i_ in range(3):  # Yahoo often sends cloud servers an empty reply: retry, and never cache an empty result
+        try:
+            h = yf.Ticker(symbol).history(period=period, interval="1d", auto_adjust=True)
+            if h is not None and not h.empty:
+                break
+        except Exception:
+            pass
+        time.sleep(1.5 * (i_ + 1))
     if h is None or h.empty:
-        return None
+        raise RuntimeError(f"No prices for {symbol}")
     s = h["Close"].astype(float)
     s.index = pd.to_datetime(s.index).tz_localize(None)
     return s
