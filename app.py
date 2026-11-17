@@ -77,6 +77,21 @@ def kpis(items):
         c_.html(card(t(h.upper(), GOLD, 11, 800, "letter-spacing:1px") + "<br>" + t(v, TXT, 22, 800) + "<br>" + t(s, MUTED, 12)))
 
 
+def explain(title, rows, note=None):
+    """Teaching box: formula, worked example with the latest numbers, how to read it."""
+    body = ""
+    for label, formula, example, read in rows:
+        body += (f'<div style="border-left:4px solid {GOLD};padding:10px 14px;margin:0 0 14px;background:rgba(0,51,102,.35);border-radius:6px">'
+                 + t(label, GOLD, 15, 800) + "<br>"
+                 + t(formula, TXT, 16, 700, "font-family:Georgia,serif") + "<br>"
+                 + (t("Example: " + example, LB, 14) + "<br>" if example else "")
+                 + t(read, TXT, 14) + "</div>")
+    if note:
+        body += t(note, MUTED, 13)
+    with st.expander(f"📘 {title}"):
+        st.html(card(body))
+
+
 def fig_base(title, h=420):
     f = go.Figure()
     f.update_layout(title=dict(text=title, font=dict(color=TXT)), paper_bgcolor="rgba(0,0,0,0)",
@@ -349,6 +364,21 @@ with tabs[0]:
             for c_ in view.columns:
                 register(f"US Treasury {c_} ({freq.lower()})", view[c_], "%", "US Treasury")
             register(f"US 10y−2y spread bp ({freq.lower()})", sp["10y − 2y (bp)"], "bp", "US Treasury")
+            y10_, y2_, y3m_ = last.get("10 Yr"), last.get("2 Yr"), last.get("3 Mo")
+            explain("How the term spreads are calculated", [
+                ("10-year minus 2-year spread", "Spread (bp) = (10-yr yield − 2-yr yield) × 100",
+                 f"({y10_:.2f}% − {y2_:.2f}%) × 100 = {(y10_ - y2_) * 100:+.0f} bp on {d0.date()}" if y10_ == y10_ and y2_ == y2_ else None,
+                 "Positive = normal, upward-sloping curve: investors want more yield to lend for longer. "
+                 "Negative = inverted curve: markets expect the Fed to cut rates, usually because growth is expected to slow. "
+                 "Every US recession since the 1970s was preceded by a 10y–2y inversion, though with a long and variable lag (often 6–24 months)."),
+                ("10-year minus 3-month spread", "Spread (bp) = (10-yr yield − 3-month T-bill yield) × 100",
+                 f"({y10_:.2f}% − {y3m_:.2f}%) × 100 = {(y10_ - y3m_) * 100:+.0f} bp" if y10_ == y10_ and y3m_ == y3m_ else None,
+                 "The 3-month bill tracks the Fed funds rate closely, so this spread compares long-term rates with today's policy rate. "
+                 "It is the version the New York Fed uses in its recession-probability model."),
+                ("Why multiply by 100?", "1 percentage point = 100 basis points (bp);  1 bp = 0.01%",
+                 "a move from 4.10% to 4.35% is +25 bp", "Spreads are quoted in basis points because the differences are small."),
+            ], note="Yields are US Treasury par yields (bond-equivalent, semi-annual). With a lower frequency (weekly, monthly) "
+                    "the spread uses the last observation of each period.")
             out = view.join(sp, how="left")
             with st.expander(f"Data table ({len(out)} rows)"):
                 st.dataframe(out.tail(300), width="stretch")
@@ -387,6 +417,23 @@ with tabs[1]:
         f.update_xaxes(title="Maturity (years)"); f.update_yaxes(title="YTM %")
         a.plotly_chart(f, width="stretch")
         b.dataframe(cc.drop(columns=["Date"]).set_index("Tenor"), width="stretch", height=420)
+        sdl10_ = sdl[sdl["Years"] == 10]["YTM %"]
+        sdl10_ = float(sdl10_.iloc[0]) if len(sdl10_) else None
+        explain("How the India spreads are calculated", [
+            ("Term spread: 10-year G-Sec minus 91-day T-bill", "Spread (bp) = (10-yr G-Sec YTM − 91-day T-bill yield) × 100",
+             f"({y10:.2f}% − {y91:.2f}%) × 100 = {(y10 - y91) * 100:+.0f} bp",
+             "The 91-day T-bill sits close to the RBI's policy and overnight rates; the 10-year carries expectations of future rates "
+             "plus a term premium. A wide positive spread = steep curve (rate cuts already done or long-term inflation/supply worries); "
+             "a narrow or negative spread = tight money today, easing expected."),
+            ("State borrowing premium: 10-year SDL minus 10-year G-Sec", "Spread (bp) = (10-yr SDL YTM − 10-yr G-Sec YTM) × 100",
+             f"({sdl10_:.2f}% − {y10:.2f}%) × 100 = {(sdl10_ - y10) * 100:+.0f} bp" if sdl10_ else None,
+             "State Development Loans (SDLs) are borrowings by state governments. They carry no default history but are less liquid "
+             "and have a smaller investor base than central-government G-Secs, so they pay extra yield. The spread widens when states "
+             "borrow heavily (often in Q4 of the financial year) and narrows when demand from banks and insurers is strong."),
+            ("Reading tenor buckets", "Tenor '9Y-10Y' = CCIL's benchmark bond maturing in 9–10 years; plotted at the upper bound (10 yrs)",
+             None, "T-bills are plotted at 0.25, 0.5 and 1 year (91, 182 and 364 days ÷ 365)."),
+        ], note="All yields are CCIL indicative yields (annualised YTM, semi-annual compounding for G-Secs and SDLs; T-bills on a "
+                "discount-to-yield basis). Spreads between different bond types are approximate when the maturities differ slightly.")
         downloads(cc.set_index("Date"), "India_GSec_curve_CCIL", "ccil")
         st.caption("Source: CCIL tenor-wise indicative yields. CCIL does not authorise commercial use of its website data "
                    "without written permission; shown here for education with attribution.")
@@ -414,6 +461,19 @@ with tabs[1]:
             st.plotly_chart(f, width="stretch")
             for c_ in hd.columns:
                 register(f"{c_} (monthly)", hd[c_], "bp" if "bp" in c_ else "%", "FRED")
+            if "India − US 10y spread (bp)" in hd:
+                sp_ = hd["India − US 10y spread (bp)"].dropna()
+                iv, uv = hd["India 10-yr G-Sec yield %"].dropna(), hd["US 10-yr yield %"].dropna()
+                explain("How the India − US spread is calculated", [
+                    ("India − US 10-year yield spread", "Spread (bp) = (India 10-yr G-Sec yield − US 10-yr Treasury yield) × 100",
+                     f"({iv.iloc[-1]:.2f}% − {uv.iloc[-1]:.2f}%) × 100 = {sp_.iloc[-1]:+.0f} bp ({sp_.index[-1]:%b %Y})" if len(sp_) else None,
+                     "The extra yield a foreign investor earns in Indian government bonds over US Treasuries, before currency moves. "
+                     "It mostly reflects the inflation gap (expected rupee depreciation) plus a country-risk premium. "
+                     "A narrowing spread makes Indian bonds less attractive to foreign investors unless the rupee is expected to stay stable."),
+                    ("Currency-adjusted view", "Return in US$ ≈ India yield − expected rupee depreciation",
+                     "a 280 bp spread with 3% expected depreciation leaves about −20 bp for an unhedged US investor",
+                     "This is uncovered interest parity: the spread is only a gain if the rupee depreciates by less than the spread."),
+                ], note="Monthly averages from FRED (OECD Main Economic Indicators). For the daily India–US spread use the RBI spread app.")
             downloads(hd, "India_rates_monthly_FRED", "indh")
             st.caption("For the daily India–US 10-year spread, see the RBI spread app on the Financial Data page.")
 
@@ -450,6 +510,31 @@ with tabs[2]:
             st.plotly_chart(f, width="stretch")
             for c_ in cd.columns:
                 register(f"{c_} ({cfreq.lower()})", cd[c_], "%", "FRED / ICE BofA")
+            def lastv(lab):
+                return cd[lab].dropna().iloc[-1] if lab in cd and len(cd[lab].dropna()) else None
+            ig_, hy_, bbb_ = lastv("US investment-grade corporate OAS (%)"), lastv("US high-yield corporate OAS (%)"), lastv("US BBB corporate OAS (%)")
+            be_, real_ = lastv("10-yr breakeven inflation (%)"), lastv("10-yr TIPS real yield (%)")
+            explain("How the credit spreads and related rates are calculated", [
+                ("Option-adjusted spread (OAS)", "OAS = corporate bond yield − Treasury yield of matching maturity − value of embedded options",
+                 (f"investment grade {ig_:.2f}% = {ig_*100:.0f} bp" + (f";  high yield {hy_:.2f}% = {hy_*100:.0f} bp" if hy_ else "")) if ig_ else None,
+                 "The extra yield investors demand for default risk and lower liquidity. ICE BofA computes it for every bond in the index "
+                 "(the spread over the Treasury curve that discounts the bond's cash flows to its price, after removing call/put option value) "
+                 "and averages by market value. Spreads widen in stress (2008: HY above 19%; March 2020: about 11%) and tighten in calm, "
+                 "risk-on markets."),
+                ("High-yield minus investment-grade", "HY − IG differential (bp) = (HY OAS − IG OAS) × 100",
+                 f"({hy_:.2f}% − {ig_:.2f}%) × 100 = {(hy_ - ig_) * 100:.0f} bp" if hy_ and ig_ else None,
+                 "Measures the extra reward for moving down the credit ladder into junk-rated bonds; a rising gap signals growing "
+                 "concern about defaults among weaker companies."),
+                ("BBB spread", "BBB OAS = spread on the lowest investment-grade rating",
+                 f"{bbb_:.2f}% = {bbb_*100:.0f} bp" if bbb_ else None,
+                 "Watched closely because a downgrade from BBB to BB ('fallen angel') forces many funds to sell."),
+                ("Breakeven inflation", "Breakeven = nominal 10-yr Treasury yield − 10-yr TIPS real yield",
+                 f"breakeven {be_:.2f}% with real yield {real_:.2f}% → nominal ≈ {be_ + real_:.2f}%" if be_ and real_ else None,
+                 "The average inflation rate at which a regular Treasury and an inflation-protected TIPS give the same return: "
+                 "the market's inflation expectation (plus a small risk and liquidity premium)."),
+                ("Term spreads on this tab", "10y − 2y and 10y − 3m are published by FRED in percentage points",
+                 None, "Multiply by 100 for basis points. See the US Treasury tab for the full explanation."),
+            ], note="OAS series are in percent, so 1.00 = 100 bp. Source: ICE BofA indices via FRED.")
             downloads(cd, f"US_spreads_{cfreq}", "cr")
             st.caption("OAS series: ICE BofA indices via FRED. Check FRED's notes for each series' licence.")
     else:
