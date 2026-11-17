@@ -92,6 +92,35 @@ def explain(title, rows, note=None):
         st.html(card(body))
 
 
+IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
+
+
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def _stamp6(key):
+    return dt.datetime.now(IST)
+
+
+@st.cache_data(ttl=12 * 3600, show_spinner=False)
+def _stamp12(key):
+    return dt.datetime.now(IST)
+
+
+@st.cache_data(ttl=24 * 3600, show_spinner=False)
+def _stamp24(key):
+    return dt.datetime.now(IST)
+
+
+def provenance(source, freq, latest, retrieved, note=None):
+    """One line under each dataset: where it came from, how often it is observed, latest point, when it was fetched."""
+    lat = latest if isinstance(latest, str) else (latest.strftime("%d %b %Y") if latest is not None else "–")
+    txt = (f"<b>Source:</b> {source} &nbsp;·&nbsp; <b>Frequency:</b> {freq} &nbsp;·&nbsp; <b>Latest observation:</b> {lat}"
+           f" &nbsp;·&nbsp; <b>Retrieved:</b> {retrieved.strftime('%d %b %Y, %H:%M IST')}")
+    if note:
+        txt += f" &nbsp;·&nbsp; {note}"
+    st.html(f'<div style="border-left:3px solid {GOLD};background:rgba(17,34,64,.7);padding:7px 12px;margin:6px 0 10px;'
+            f'border-radius:6px;user-select:none;-webkit-user-select:none">{t(txt, LB, 13)}</div>')
+
+
 def fig_base(title, h=420):
     f = go.Figure()
     f.update_layout(title=dict(text=title, font=dict(color=TXT)), paper_bgcolor="rgba(0,0,0,0)",
@@ -330,6 +359,9 @@ with tabs[0]:
             d0 = df.dropna(how="all").index[-1]
             s10_2 = last.get("10 Yr") - last.get("2 Yr") if "10 Yr" in last and "2 Yr" in last else None
             s10_3m = last.get("10 Yr") - last.get("3 Mo") if "10 Yr" in last and "3 Mo" in last else None
+            provenance("U.S. Department of the Treasury, daily par yield curve (official)",
+                       f"daily (business days); shown {freq.lower()}", d0, _stamp12(f"ust{yr}"),
+                       "end-of-day rates, not intraday quotes")
             kpis([("10-yr yield", f"{last.get('10 Yr', float('nan')):.2f}%", f"on {d0.date()}"),
                   ("2-yr yield", f"{last.get('2 Yr', float('nan')):.2f}%", ""),
                   ("10y − 2y spread", f"{s10_2*100:+.0f} bp" if s10_2 is not None else "–", "negative = inverted"),
@@ -403,6 +435,8 @@ with tabs[1]:
             r_ = g.iloc[(g["Years"] - n).abs().argsort()[:1]]
             return float(r_["YTM %"].iloc[0]) if len(r_) else None
         y10, y91, y2 = ylookup(10), ylookup(0.25), ylookup(2)
+        provenance("CCIL tenor-wise indicative yields", "daily snapshot (one date)", str(pd.Timestamp(cc['Date'].iloc[0]).strftime('%d %b %Y')),
+                   _stamp6("ccil"), "indicative end-of-day yields")
         kpis([("10-yr G-Sec", f"{y10:.2f}%", f"on {cc['Date'].iloc[0]}"), ("91-day T-bill", f"{y91:.2f}%", ""),
               ("10y − 91d spread", f"{(y10 - y91)*100:+.0f} bp", "term premium"),
               ("10y SDL − G-Sec", f"{(float(sdl[sdl['Years'] == 10]['YTM %'].iloc[0]) - y10)*100:+.0f} bp"
@@ -455,6 +489,8 @@ with tabs[1]:
             hd = hd[hd.index >= "2000-01-01"]
             if {"India 10-yr G-Sec yield %", "US 10-yr yield %"} <= set(hd.columns):
                 hd["India − US 10y spread (bp)"] = (hd["India 10-yr G-Sec yield %"] - hd["US 10-yr yield %"]) * 100
+            provenance("FRED (OECD Main Economic Indicators)", "monthly averages", hd.dropna(how="all").index[-1],
+                       _stamp12("indhist"), "published with a lag of one to three months")
             f = fig_base("India rates since 2000 (monthly)")
             for i_, c_ in enumerate([c for c in hd.columns if "bp" not in c]):
                 f.add_scatter(x=hd.index, y=hd[c_], name=c_, line=dict(color=PALETTE[i_], width=2))
@@ -503,6 +539,8 @@ with tabs[2]:
             st.warning(f"Not loaded (FRED unavailable right now): {', '.join(bad)}")
         if len(cd.columns):
             cd = resample(cd[cd.index >= f"{since}-01-01"], cfreq)
+            provenance("FRED (ICE BofA indices, U.S. Treasury, Federal Reserve)", f"daily; shown {cfreq.lower()}",
+                       cd.dropna(how="all").index[-1], _stamp12("cr" + "|".join(cd.columns)), "end-of-day values")
             kpis([(c_[:28], f"{cd[c_].dropna().iloc[-1]:.2f}", f"latest, {cd[c_].dropna().index[-1].date()}") for c_ in cd.columns[:4]])
             f = fig_base(f"Spreads and rates ({cfreq.lower()})")
             for i_, c_ in enumerate(cd.columns):
@@ -576,6 +614,9 @@ with tabs[3]:
             tbl = pd.DataFrame({lab: {"1 month": ret(bd[lab], 30), "3 months": ret(bd[lab], 91), "1 year": ret(bd[lab], 365),
                                       "3 years (total)": ret(bd[lab], 1095),
                                       "Volatility (ann.)": bd[lab].pct_change().std() * np.sqrt(252)} for lab in bd.columns}).T
+            provenance("Yahoo Finance (ETF and index closing prices, adjusted for distributions)", "daily closes",
+                       bd.dropna(how="all").index[-1], _stamp6("bm" + "|".join(bd.columns)),
+                       "may be delayed; not a real-time feed")
             st.dataframe(tbl.map(lambda v: "–" if pd.isna(v) else f"{v*100:+.1f}%" if v == v else "–"), width="stretch")
             f = fig_base("Growth of 100")
             for i_, c_ in enumerate(bd.columns):
@@ -634,6 +675,11 @@ with tabs[4]:
         if len(md.columns):
             md.index.name = "Year"
             proj_from = dt.date.today().year if src_ == "IMF WEO" else None
+            _last_actual = (proj_from - 1) if proj_from else int(md.dropna(how="all").index.max())
+            provenance("World Bank World Development Indicators" if src_ != "IMF WEO" else "IMF World Economic Outlook (DataMapper)",
+                       "annual", f"{_last_actual}" + (f" (projections to {int(md.index.max())})" if proj_from else ""),
+                       _stamp24("mac" + ind_ + "|".join(md.columns)),
+                       "IMF values after the last actual year are projections" if proj_from else "latest year varies by country")
             f = fig_base(f"{ind_} ({src_})")
             for i_, c_ in enumerate(md.columns):
                 s_ = md[c_].dropna()
@@ -697,8 +743,11 @@ with tabs[5]:
             gap = (idx[-1] - idx[-2]).days if len(idx) > 1 else 1
             fq = "YE" if gap > 300 else "QE" if gap > 80 else "ME" if gap > 25 else "W-FRI" if gap > 5 else "B"
         fut_idx = pd.date_range(idx[-1], periods=int(h_) + 1, freq=fq)[1:]
-        fc, lo, hi, eq = None, None, None, ""
+        fc, lo, hi, eq, fitted, band_note = None, None, None, "", None, ""
         try:
+            if method.startswith("Log-linear") and (y <= 0).any():
+                raise ValueError("the log-linear trend needs strictly positive values (this series has zeros or negatives). "
+                                 "Use the linear trend, or a level series such as GDP in US$")
             if method.startswith("Linear trend") or method.startswith("Log-linear"):
                 logm = method.startswith("Log")
                 yy = np.log(y.values) if logm else y.values
@@ -712,6 +761,9 @@ with tabs[5]:
                 sef = np.array([se * np.sqrt(1 + np.array([1, k]) @ xtx @ np.array([1, k])) for k in tf])
                 m_ = beta_[0] + beta_[1] * tf
                 fc, lo, hi = m_, m_ - 1.96 * sef, m_ + 1.96 * sef
+                fitted = pd.Series(np.exp(fit) if logm else fit, index=y.index)
+                band_note = ("95% prediction band from the regression: assumes independent, normally distributed residuals with "
+                             "constant variance, and that the straight-line trend continues; includes uncertainty in the fitted line.")
                 if logm:
                     fc, lo, hi = np.exp(fc), np.exp(lo), np.exp(hi)
                     eq = f"ln(y) = {beta_[0]:.4f} + {beta_[1]:.5f}·t   →   growth ≈ {np.expm1(beta_[1])*100:.2f}% per period;  R² = {r2:.3f}"
@@ -729,6 +781,9 @@ with tabs[5]:
                 var = np.array([se ** 2 * sum(phi ** (2 * j) for j in range(k + 1)) for k in range(int(h_))])
                 lo, hi = fc - 1.96 * np.sqrt(var), fc + 1.96 * np.sqrt(var)
                 mean_lr = cst / (1 - phi) if abs(phi) < 1 else float("nan")
+                fitted = pd.Series(cst + phi * x0, index=y.index[1:])
+                band_note = ("95% band from the AR(1) error variance compounded over the horizon: assumes normal, uncorrelated shocks "
+                             "and stable parameters; parameter-estimation uncertainty is not included, so the band is too narrow.")
                 eq = (f"y(t) = {cst:.4f} + {phi:.4f}·y(t−1) + e;   long-run mean = {mean_lr:.3f}" +
                       ("   (φ ≥ 1: non-stationary, try the Change transform)" if phi >= 1 else ""))
             elif method.startswith("Holt"):
@@ -737,22 +792,34 @@ with tabs[5]:
                 fc = mdl.forecast(int(h_)); se = np.std(mdl.resid, ddof=1)
                 lo, hi = fc - 1.96 * se * np.sqrt(np.arange(1, int(h_) + 1)), fc + 1.96 * se * np.sqrt(np.arange(1, int(h_) + 1))
                 eq = f"α (level) = {mdl.params['smoothing_level']:.3f},  β (trend) = {mdl.params['smoothing_trend']:.3f}"
+                fitted = pd.Series(mdl.fittedvalues, index=y.index)
+                band_note = ("Approximate 95% band: one-step error × √h. A rule of thumb that assumes normal, independent errors; "
+                             "it is not the exact Holt prediction interval.")
             else:
                 k_ = min(12, len(y))
                 m_ = y.iloc[-k_:].mean(); se = y.iloc[-k_:].std()
                 fc = np.repeat(m_, int(h_)); lo, hi = fc - 1.96 * se, fc + 1.96 * se
                 eq = f"Forecast = average of the last {k_} observations = {m_:.4f}"
+                band_note = (f"95% band = average ± 1.96 × standard deviation of the last {k_} observations; it does not widen "
+                             "with the horizon, so it understates uncertainty further out.")
         except Exception as e:
             st.error(f"Forecast failed: {e}")
-        f = fig_base(f"{name} — {transform.lower()} and forecast", 460)
-        f.add_scatter(x=y.index, y=y.values, name="Actual", line=dict(color=LB, width=2))
+        f = fig_base(f"{name} — {transform.lower()}: observed, fitted and forecast", 460)
+        f.add_scatter(x=y.index, y=y.values, name="Observed (data)", line=dict(color=LB, width=2))
+        if fitted is not None:
+            f.add_scatter(x=fitted.index, y=fitted.values, name="Fitted (in-sample)", line=dict(color="#ff9f43", width=1.6, dash="dot"))
+        f.add_vline(x=y.index[-1], line=dict(color=MUTED, dash="dot"))
         if fc is not None:
             f.add_scatter(x=fut_idx, y=hi, mode="lines", line=dict(width=0), showlegend=False, hoverinfo="skip")
             f.add_scatter(x=fut_idx, y=lo, mode="lines", fill="tonexty", fillcolor="rgba(255,215,0,.15)", line=dict(width=0), name="95% band")
-            f.add_scatter(x=fut_idx, y=fc, name="Forecast", line=dict(color=GOLD, width=3, dash="dash"))
+            f.add_scatter(x=fut_idx, y=fc, name="Forecast (out-of-sample)", line=dict(color=GOLD, width=3, dash="dash"))
         st.plotly_chart(f, width="stretch")
         if eq:
-            st.html(card(t("MODEL", GOLD, 11, 800, "letter-spacing:1px") + "<br>" + t(eq, TXT, 16, 700), border=GOLD))
+            st.html(card(t("MODEL", GOLD, 11, 800, "letter-spacing:1px") + "<br>" + t(eq, TXT, 16, 700) +
+                         (("<br><br>" + t("FORECAST BAND ASSUMPTIONS", GOLD, 11, 800, "letter-spacing:1px") + "<br>" + t(band_note, TXT, 14))
+                          if band_note else ""), border=GOLD))
+        st.caption("Observed = the downloaded data. Fitted = the model's in-sample values (how well it explains the past). "
+                   "Forecast = out-of-sample projection to the right of the dotted line; it is a model output, not data.")
         if fc is not None:
             ft = pd.DataFrame({"Forecast": fc, "Lower 95%": lo, "Upper 95%": hi}, index=fut_idx)
             ft.index.name = "Period"
@@ -777,7 +844,11 @@ with tabs[5]:
                                    + ("stationary at 5%" if adf[1] < 0.05 else "not stationary at 5% (consider the Change transform)"))
                 except Exception:
                     pass
-            full = pd.concat([y.rename("Actual").to_frame(), ft])
+            obs_ = y.rename("Observed").to_frame()
+            if fitted is not None:
+                obs_["Fitted (in-sample)"] = fitted
+            ft.index = pd.to_datetime(ft.index)
+            full = pd.concat([obs_, ft.rename(columns={"Forecast": "Forecast (out-of-sample)"})])
             downloads(full, f"Forecast_{re.sub(r'[^A-Za-z0-9]+', '_', name)[:40]}", "fc")
         with st.expander("Download all loaded series (one Excel file)"):
             all_ = {re.sub(r"[\[\]:*?/\\]", "", k)[:31]: v["s"].to_frame("value") for k, v in ds.items()}
